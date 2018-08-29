@@ -43,7 +43,11 @@ val dep = {
     "io.circe" %% "circe-parser" % circeVersion,
     "io.circe" %% "circe-generic-extras" % circeVersion,
     "com.miguno.akka" %% "akka-mock-scheduler" % "0.5.1" % "it,test",
-    "commons-io" % "commons-io" % "2.5"
+    "commons-io" % "commons-io" % "2.5",
+
+    "org.postgresql" % "postgresql" % "9.4.1208",
+    "io.getquill" %% "quill-jdbc" % "2.5.4",
+    "io.scalaland" %% "chimney" % "0.2.1"
   )
 }
 

@@ -5,13 +5,15 @@ import java.time.Clock
 
 import akka.actor.{ActorRef, ActorSystem}
 import akka.agent.Agent
+import io.getquill.{PostgresJdbcContext, SnakeCase}
 import io.iohk.ethereum.blockchain.data.GenesisDataLoader
 import io.iohk.ethereum.blockchain.sync.{BlockchainHostActor, SyncController}
 import io.iohk.ethereum.db.components.Storages.PruningModeComponent
 import io.iohk.ethereum.db.components.{SharedLevelDBDataSources, Storages}
+import io.iohk.ethereum.db.postgres.PostgresStorage
 import io.iohk.ethereum.db.storage.AppStateStorage
 import io.iohk.ethereum.db.storage.pruning.PruningMode
-import io.iohk.ethereum.domain.{Blockchain, BlockchainImpl}
+import io.iohk.ethereum.domain.{Blockchain, PostgresBlockchainImpl}
 import io.iohk.ethereum.jsonrpc.server.JsonRpcServer.JsonRpcServerConfig
 import io.iohk.ethereum.jsonrpc.NetService.NetServiceConfig
 import io.iohk.ethereum.ledger.{Ledger, LedgerImpl}
@@ -71,7 +73,13 @@ trait PruningConfigBuilder extends PruningModeComponent {
 }
 
 trait StorageBuilder {
-  lazy val storagesInstance =  new SharedLevelDBDataSources with PruningConfigBuilder with Storages.DefaultStorages
+  lazy val storagesInstance = new SharedLevelDBDataSources with PruningConfigBuilder with Storages.DefaultStorages
+}
+
+trait PostgresStorageBuilder {
+  lazy val postgresStorage = new PostgresStorage {
+    override protected val ctx = new PostgresJdbcContext(SnakeCase, "mantis.postgres")
+  }
 }
 
 trait DiscoveryConfigBuilder {
@@ -89,10 +97,10 @@ trait KnownNodesManagerBuilder {
 
 trait PeerDiscoveryManagerBuilder {
   self: ActorSystemBuilder
-  with DiscoveryListenerBuilder
-  with NodeStatusBuilder
-  with DiscoveryConfigBuilder
-  with StorageBuilder =>
+    with DiscoveryListenerBuilder
+    with NodeStatusBuilder
+    with DiscoveryConfigBuilder
+    with StorageBuilder =>
 
   lazy val peerDiscoveryManager =
     actorSystem.actorOf(PeerDiscoveryManager.props(discoveryListener, discoveryConfig,
@@ -101,15 +109,15 @@ trait PeerDiscoveryManagerBuilder {
 
 trait DiscoveryListenerBuilder {
   self: ActorSystemBuilder
-  with DiscoveryConfigBuilder
-  with NodeStatusBuilder =>
+    with DiscoveryConfigBuilder
+    with NodeStatusBuilder =>
 
   lazy val discoveryListener = actorSystem.actorOf(DiscoveryListener.props(discoveryConfig, nodeStatusHolder), "discovery-listener")
 }
 
 trait NodeStatusBuilder {
 
-  self : NodeKeyBuilder =>
+  self: NodeKeyBuilder =>
 
   private val nodeStatus =
     NodeStatus(
@@ -121,9 +129,10 @@ trait NodeStatusBuilder {
 }
 
 trait BlockchainBuilder {
-  self: StorageBuilder =>
+  self: StorageBuilder with PostgresStorageBuilder =>
 
-  lazy val blockchain: BlockchainImpl = BlockchainImpl(storagesInstance.storages)
+  //lazy val blockchain: Blockchain = BlockchainImpl(storagesInstance.storages)
+  lazy val blockchain: Blockchain = PostgresBlockchainImpl(postgresStorage, storagesInstance.storages)
 }
 
 trait ForkResolverBuilder {
@@ -155,7 +164,7 @@ trait HandshakerBuilder {
 
 trait AuthHandshakerBuilder {
   self: NodeKeyBuilder
-  with SecureRandomBuilder =>
+    with SecureRandomBuilder =>
 
   lazy val authHandshaker: AuthHandshaker = AuthHandshaker(nodeKey, secureRandom)
 }
@@ -443,6 +452,7 @@ trait MinerBuilder {
 trait Node extends NodeKeyBuilder
   with ActorSystemBuilder
   with StorageBuilder
+  with PostgresStorageBuilder
   with BlockchainBuilder
   with NodeStatusBuilder
   with ForkResolverBuilder

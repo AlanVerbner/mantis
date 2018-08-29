@@ -42,13 +42,13 @@ trait Ledger {
   */
 class LedgerImpl(
     vm: VM,
-    blockchain: BlockchainImpl,
+    blockchain: Blockchain,
     blockQueue: BlockQueue,
     blockchainConfig: BlockchainConfig,
     validators: Validators)
   extends Ledger with Logger {
 
-  def this(vm: VM, blockchain: BlockchainImpl, blockchainConfig: BlockchainConfig,
+  def this(vm: VM, blockchain: Blockchain, blockchainConfig: BlockchainConfig,
     syncConfig: SyncConfig, validators: Validators) =
     this(vm, blockchain, BlockQueue(blockchain, syncConfig), blockchainConfig, validators)
 

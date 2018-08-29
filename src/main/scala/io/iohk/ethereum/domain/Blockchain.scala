@@ -1,6 +1,7 @@
 package io.iohk.ethereum.domain
 
 import akka.util.ByteString
+import io.iohk.ethereum.db.postgres.PostgresStorage
 import io.iohk.ethereum.db.storage.NodeStorage.{NodeEncoded, NodeHash}
 import io.iohk.ethereum.db.storage.TransactionMappingStorage.TransactionLocation
 import io.iohk.ethereum.db.storage._
@@ -8,7 +9,6 @@ import io.iohk.ethereum.db.storage.pruning.PruningMode
 import io.iohk.ethereum.ledger.{InMemoryWorldStateProxy, InMemoryWorldStateProxyStorage}
 import io.iohk.ethereum.mpt.{MerklePatriciaTrie, MptNode, NodesKeyValueStorage}
 import io.iohk.ethereum.network.p2p.messages.PV62.BlockBody
-import io.iohk.ethereum.vm.{Storage, WorldStateProxy}
 import io.iohk.ethereum.network.p2p.messages.PV63.MptNodeEncoders._
 
 /**
@@ -17,8 +17,8 @@ import io.iohk.ethereum.network.p2p.messages.PV63.MptNodeEncoders._
 // scalastyle:off number.of.methods
 trait Blockchain {
 
-  type S <: Storage[S]
-  type WS <: WorldStateProxy[WS, S]
+  type S = InMemoryWorldStateProxyStorage //<: Storage[S]
+  type WS = InMemoryWorldStateProxy // <: WorldStateProxy[WS, S]
 
   /**
     * Allows to query a blockHeader by block hash
@@ -345,6 +345,161 @@ class BlockchainImpl(
   def rollbackStateChangesMadeByBlock(blockNumber: BigInt): Unit = PruningMode.rollback(pruningMode, blockNumber, nodeStorage)
 }
 
+class PostgresBlockchainImpl (
+  protected val postgresStorage: PostgresStorage,
+  protected val receiptStorage: ReceiptStorage,
+  protected val evmCodeStorage: EvmCodeStorage,
+  protected val pruningMode: PruningMode,
+  protected val nodeStorage: NodeStorage,
+  protected val totalDifficultyStorage: TotalDifficultyStorage,
+  protected val appStateStorage: AppStateStorage
+) extends Blockchain {
+
+  override def getBlockHeaderByHash(hash: ByteString): Option[BlockHeader] =
+    postgresStorage.getBlockHeaderByHash(hash)
+
+  override def getBlockHeaderByNumber(number: BigInt): Option[BlockHeader] =
+    postgresStorage.getBlockHeaderByNumber(number)
+
+  override def getBlockBodyByHash(hash: ByteString): Option[BlockBody] =
+    postgresStorage.getBlockBodyByHash(hash)
+
+  override def getBlockByHash(hash: ByteString): Option[Block] =
+    postgresStorage.getBlockByHash(hash)
+
+  override def getBlockByNumber(number: BigInt): Option[Block] =
+    postgresStorage.getBlockByNumber(number)
+
+  override def getReceiptsByHash(blockhash: ByteString): Option[Seq[Receipt]] = receiptStorage.get(blockhash)
+
+  override def getEvmCodeByHash(hash: ByteString): Option[ByteString] = evmCodeStorage.get(hash)
+
+  override def getTotalDifficultyByHash(blockhash: ByteString): Option[BigInt] = totalDifficultyStorage.get(blockhash)
+
+  override def getBestBlockNumber(): BigInt =
+    appStateStorage.getBestBlockNumber()
+
+  override def getBestBlock(): Block =
+    getBlockByNumber(getBestBlockNumber()).get
+
+  override def getAccount(address: Address, blockNumber: BigInt): Option[Account] =
+    getBlockHeaderByNumber(blockNumber).flatMap { bh =>
+      val mpt = MerklePatriciaTrie[Address, Account](
+        bh.stateRoot.toArray,
+        nodesKeyValueStorageFor(Some(blockNumber))
+      )
+      mpt.get(address)
+    }
+
+  override def getAccountStorageAt(rootHash: ByteString, position: BigInt): ByteString = {
+    storageMpt(
+      rootHash,
+      nodesKeyValueStorageFor(None)
+    ).get(UInt256(position)).getOrElse(UInt256(0)).bytes
+  }
+
+  override def save(blockHeader: BlockHeader): Unit = {
+    postgresStorage.saveBlockHeader(blockHeader)
+  }
+
+  override def getMptNodeByHash(hash: ByteString): Option[MptNode] = nodesKeyValueStorageFor(None).get(hash).map(_.toMptNode)
+
+  override def getTransactionLocation(txHash: ByteString): Option[TransactionLocation] =
+    postgresStorage.getTransactionIndex()
+
+  override def save(blockHash: ByteString, blockBody: BlockBody): Unit =
+    postgresStorage.saveBlockBody(blockHash, blockBody)
+
+  override def save(block: Block, receipts: Seq[Receipt], totalDifficulty: BigInt, saveAsBestBlock: Boolean): Unit = {
+    // TODO(ALAN): Add Transaction here
+    postgresStorage.saveBlock(block)
+    save(block.header.hash, receipts)
+    save(block.header.hash, totalDifficulty)
+    if (saveAsBestBlock) {
+      saveBestBlockNumber(block.header.number)
+    }
+    pruneState(block.header.number)
+  }
+
+  /**
+    * Persists a block in the underlying Blockchain Database
+    *
+    * @param block Block to be saved
+    */
+  override def save(block: Block): Unit = postgresStorage.saveBlock(block)
+
+  override def save(blockHash: ByteString, receipts: Seq[Receipt]): Unit = receiptStorage.put(blockHash, receipts)
+
+  override def save(hash: ByteString, evmCode: ByteString): Unit = evmCodeStorage.put(hash, evmCode)
+
+  override def saveBestBlockNumber(number: BigInt): Unit =
+    appStateStorage.putBestBlockNumber(number)
+
+  def save(blockhash: ByteString, td: BigInt): Unit = totalDifficultyStorage.put(blockhash, td)
+
+  def saveNode(nodeHash: NodeHash, nodeEncoded: NodeEncoded, blockNumber: BigInt): Unit =
+    nodesKeyValueStorageFor(Some(blockNumber)).put(nodeHash, nodeEncoded)
+
+  override protected def getHashByBlockNumber(number: BigInt): Option[ByteString] =
+    postgresStorage.getBlockHeaderByNumber(number).map(_.hash)
+
+  override def removeBlock(blockHash: ByteString, saveParentAsBestBlock: Boolean): Unit = {
+    val maybeBlockHeader = getBlockHeaderByHash(blockHash)
+
+    postgresStorage.removeBlock(blockHash)
+    totalDifficultyStorage.remove(blockHash)
+    receiptStorage.remove(blockHash)
+    maybeBlockHeader.foreach{ h =>
+      rollbackStateChangesMadeByBlock(h.number)
+
+      if (saveParentAsBestBlock) {
+        appStateStorage.putBestBlockNumber(h.number - 1)
+      }
+    }
+  }
+
+  private def saveTxsLocations(blockHash: ByteString, blockBody: BlockBody): Unit = ???
+
+  private def removeTxsLocations(stxs: Seq[SignedTransaction]): Unit = ???
+
+  override type S = InMemoryWorldStateProxyStorage
+  override type WS = InMemoryWorldStateProxy
+
+  override def getWorldStateProxy(blockNumber: BigInt,
+    accountStartNonce: UInt256,
+    stateRootHash: Option[ByteString],
+    noEmptyAccount: Boolean = false): InMemoryWorldStateProxy =
+    InMemoryWorldStateProxy(
+      evmCodeStorage,
+      nodesKeyValueStorageFor(Some(blockNumber)),
+      accountStartNonce,
+      (number: BigInt) => getBlockHeaderByNumber(number).map(_.hash),
+      stateRootHash,
+      noEmptyAccount
+    )
+
+  //FIXME Maybe we can use this one in regular execution too and persist underlying storage when block execution is successful
+  override def getReadOnlyWorldStateProxy(blockNumber: Option[BigInt],
+    accountStartNonce: UInt256,
+    stateRootHash: Option[ByteString],
+    noEmptyAccount: Boolean = false): InMemoryWorldStateProxy =
+    InMemoryWorldStateProxy(
+      evmCodeStorage,
+      ReadOnlyNodeStorage(nodesKeyValueStorageFor(blockNumber)),
+      accountStartNonce,
+      (number: BigInt) => getBlockHeaderByNumber(number).map(_.hash),
+      stateRootHash,
+      noEmptyAccounts = false
+    )
+
+  def nodesKeyValueStorageFor(blockNumber: Option[BigInt]): NodesKeyValueStorage =
+    PruningMode.nodesKeyValueStorage(pruningMode, nodeStorage)(blockNumber)
+
+  def pruneState(blockNumber: BigInt): Unit = PruningMode.prune(pruningMode, blockNumber, nodeStorage)
+
+  def rollbackStateChangesMadeByBlock(blockNumber: BigInt): Unit = PruningMode.rollback(pruningMode, blockNumber, nodeStorage)
+}
+
 trait BlockchainStorages {
   val blockHeadersStorage: BlockHeadersStorage
   val blockBodiesStorage: BlockBodiesStorage
@@ -370,6 +525,19 @@ object BlockchainImpl {
       nodeStorage = storages.nodeStorage,
       totalDifficultyStorage = storages.totalDifficultyStorage,
       transactionMappingStorage = storages.transactionMappingStorage,
+      appStateStorage = storages.appStateStorage
+    )
+}
+
+object PostgresBlockchainImpl {
+  def apply(postgresStorage: PostgresStorage, storages: BlockchainStorages): Blockchain =
+    new PostgresBlockchainImpl (
+      postgresStorage = postgresStorage,
+      receiptStorage = storages.receiptStorage,
+      evmCodeStorage = storages.evmCodeStorage,
+      pruningMode = storages.pruningMode,
+      nodeStorage = storages.nodeStorage,
+      totalDifficultyStorage = storages.totalDifficultyStorage,
       appStateStorage = storages.appStateStorage
     )
 }
