@@ -459,11 +459,11 @@ class FastSync(
     }
 
     def assignWork(peer: Peer): Unit = {
-      if (syncState.pendingNonMptNodes.nonEmpty || syncState.pendingMptNodes.nonEmpty) {
-        requestNodes(peer)
-      } else {
+      //if (syncState.pendingNonMptNodes.nonEmpty || syncState.pendingMptNodes.nonEmpty) {
+      //  requestNodes(peer)
+      //} else {
         assignBlockchainWork(peer)
-      }
+      //}
     }
 
     def assignBlockchainWork(peer: Peer): Unit = {
