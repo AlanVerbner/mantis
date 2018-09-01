@@ -37,6 +37,11 @@ object SignedTransaction {
     SignedTransaction(tx, txSignature, address)
   }
 
+  def apply(tx: Transaction, pointSign: Byte, signatureRandom: BigInt, signature: BigInt, address: Address): SignedTransaction = {
+    val txSignature = ECDSASignature(r = signatureRandom, s = signature, v = pointSign)
+    SignedTransaction(tx, txSignature, address)
+  }
+
   def sign(tx: Transaction, keyPair: AsymmetricCipherKeyPair, chainId: Option[Byte]): SignedTransaction = {
     val bytes = bytesToSign(tx, chainId)
     val sig = ECDSASignature.sign(bytes, keyPair, chainId)

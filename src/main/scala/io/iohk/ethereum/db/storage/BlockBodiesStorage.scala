@@ -46,12 +46,11 @@ object BlockBodiesStorage {
       SignedTransaction(
         Transaction(nonce, gasPrice, gasLimit, receivingAddressOpt, value, payload),
         (pointSign: Int).toByte,
-        signatureRandom,
+        signatureRandom: ByteString,
         signature,
         Address(senderAddress: Array[Byte])
       )
   }
-
 
   private[BlockBodiesStorage] def toBytes(blockBody: BlockBody): IndexedSeq[Byte] = {
     encode(BlockBody.blockBodyToRlpEncodable(

@@ -16,17 +16,13 @@ object Models {
   implicit val stringToByteString: Transformer[String, ByteString] =
     (s: String) => ByteString.fromArray(Hex.decode(s))
 
-  implicit val bigIntToString: Transformer[BigInt, String] = _.toString
-
-  implicit val stringToBigInt: Transformer[String, BigInt] = s => BigInt(s)
-
-  implicit val addressToString: Transformer[Address, String] = _.toString
+  implicit val addressToString: Transformer[Address, String] = _.toUnprefixedString
 
   implicit val stringToAddress: Transformer[String, Address] = Address(_)
 
   def hashToString(b: ByteString): String = byteStringToString.transform(b)
 
-  def blockNumberToString(n: BigInt): String = bigIntToString.transform(n)
+  type Hash = String
 
   case class BlockHeaderModel(
     hash: String,
@@ -37,10 +33,10 @@ object Models {
     transactionsRoot: String,
     receiptsRoot: String,
     logsBloom: String,
-    difficulty: String,
-    number: String,
-    gasLimit: String,
-    gasUsed: String,
+    difficulty: BigInt,
+    number: BigInt,
+    gasLimit: BigInt,
+    gasUsed: BigInt,
     unixTimestamp: Long,
     extraData: String,
     mixHash: String,
@@ -56,27 +52,29 @@ object Models {
   }
 
   case class TransactionModel(
+    hash: String,
     blockHash: String,
-    nonce: String,
-    gasPrice: String,
-    gasLimit: String,
+    nonce: BigInt,
+    gasPrice: BigInt,
+    gasLimit: BigInt,
     receivingAddress: Option[String],
-    value: String,
+    value: BigInt,
     payload: String,
-    pointSign: Byte,
-    signatureRandom: String,
-    signature: String,
+    pointSign: String,
+    signatureRandom: BigInt,
+    signature: BigInt,
     senderAddress: String
   )
 
   object TransactionModel {
     def toModel(blockHash: ByteString, signedTransaction: SignedTransaction): TransactionModel =
       signedTransaction.tx.into[TransactionModel]
+        .withFieldConst(_.hash, byteStringToString.transform(signedTransaction.hash))
         .withFieldConst(_.blockHash, byteStringToString.transform(blockHash))
-        .withFieldConst(_.pointSign, signedTransaction.signature.v)
-        .withFieldConst(_.signatureRandom, bigIntToString.transform(signedTransaction.signature.r))
-        .withFieldConst(_.signature, bigIntToString.transform(signedTransaction.signature.s))
-        .withFieldConst(_.senderAddress, signedTransaction.senderAddress.toString)
+        .withFieldConst(_.pointSign, signedTransaction.signature.v.toChar.toString)
+        .withFieldConst(_.signatureRandom, signedTransaction.signature.r)
+        .withFieldConst(_.signature, signedTransaction.signature.s)
+        .withFieldConst(_.senderAddress, signedTransaction.senderAddress.toUnprefixedString)
         .transform
 
     def fromModel(transactionModel: TransactionModel): SignedTransaction = {
@@ -85,9 +83,9 @@ object Models {
       val senderAddress = Address(transactionModel.senderAddress)
       SignedTransaction(
         tx,
-        transactionModel.pointSign,
-        stringToByteString.transform(transactionModel.signatureRandom),
-        stringToByteString.transform(transactionModel.signature),
+        transactionModel.pointSign.toByte,
+        transactionModel.signatureRandom,
+        transactionModel.signature,
         senderAddress)
     }
   }
@@ -102,10 +100,10 @@ object Models {
     transactionsRoot: String,
     receiptsRoot: String,
     logsBloom: String,
-    difficulty: String,
-    number: String,
-    gasLimit: String,
-    gasUsed: String,
+    difficulty: BigInt,
+    number: BigInt,
+    gasLimit: BigInt,
+    gasUsed: BigInt,
     unixTimestamp: Long,
     extraData: String,
     mixHash: String,
