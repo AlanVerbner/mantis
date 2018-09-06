@@ -71,7 +71,7 @@ object Models {
       signedTransaction.tx.into[TransactionModel]
         .withFieldConst(_.hash, byteStringToString.transform(signedTransaction.hash))
         .withFieldConst(_.blockHash, byteStringToString.transform(blockHash))
-        .withFieldConst(_.pointSign, signedTransaction.signature.v.toChar.toString)
+        .withFieldConst(_.pointSign, signedTransaction.signature.v.toString.trim)
         .withFieldConst(_.signatureRandom, signedTransaction.signature.r)
         .withFieldConst(_.signature, signedTransaction.signature.s)
         .withFieldConst(_.senderAddress, signedTransaction.senderAddress.toUnprefixedString)
@@ -83,7 +83,7 @@ object Models {
       val senderAddress = Address(transactionModel.senderAddress)
       SignedTransaction(
         tx,
-        transactionModel.pointSign.toByte,
+        transactionModel.pointSign.trim.toByte,
         transactionModel.signatureRandom,
         transactionModel.signature,
         senderAddress)
